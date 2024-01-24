@@ -6,6 +6,7 @@ use png::{Decoder, Encoder, Reader, Info};
 use clap::Parser;
 use std::collections::VecDeque;
 use crc::{Crc, CRC_32_CKSUM};
+use std::error::Error;
 static FILEBEG: u32 = 0x0f1f2fff;
 static FILEEND: u32 = 0x0e1e2eee;
 
@@ -51,11 +52,11 @@ struct Args {
     decode: bool
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>>{
     let args: Args = Args::parse();
 
-    let decoder = Decoder::new(File::open(args.filename).unwrap());
-    let mut reader = decoder.read_info().unwrap();
+    let decoder = Decoder::new(File::open(args.filename)?);
+    let mut reader = decoder.read_info()?;
 
     let image_info = check_info(&reader);
 
@@ -63,14 +64,15 @@ fn main() {
 
     if args.decode{
         println!("Reading file...");
-        let _r = reader.next_frame(&mut buf).unwrap();
-        decode(&buf, image_info, &args.outputfile.unwrap());
+        let _r = reader.next_frame(&mut buf)?;
+        decode(&buf, image_info, &args.outputfile.expect("no outputfile?"))?;
     } else if args.encode{
         println!("Reading file...");
-        let _r = reader.next_frame(&mut buf).unwrap();
-        encode(&reader, &mut buf, image_info, &args.outputfile.unwrap(), &args.inputfile.unwrap());
+        let _r = reader.next_frame(&mut buf)?;
+        encode(&reader, &mut buf, image_info, &args.outputfile.expect("no outputfile?"), &args.inputfile.expect("no inputfile?"))?;
     }
 
+    Ok(())
 }
 
 enum SearchState{
@@ -79,14 +81,14 @@ enum SearchState{
     CRC(u8),
 }
 
-fn decode(buf: &Vec<u8>, image_info: ImageInfo, outputfile: &str){
+fn decode(buf: &Vec<u8>, image_info: ImageInfo, outputfile: &str) -> Result<(), Box<dyn Error>>{
     let len = (image_info.height*image_info.widht*(image_info.channels as u32)*((image_info.bit_depth/8) as u32)) as usize;
 
     let mut counter = 0;
     let mut byte: u8 = 0;
 
     let path = Path::new(outputfile);
-    let file = File::create(path).unwrap();
+    let file = File::create(path)?;
     let ref mut writer = BufWriter::new(file);
 
     let start = FILEBEG.to_be_bytes();
@@ -146,10 +148,10 @@ fn decode(buf: &Vec<u8>, image_info: ImageInfo, outputfile: &str){
                         else{
                             state = SearchState::FoundEnd(0);
                             if n > 0{
-                                writer.write(&end[0..n as usize]).unwrap();
+                                writer.write(&end[0..n as usize])?;
                                 digest.update(&end[0..n as usize]);
                             }
-                            writer.write(&[byte]).unwrap();
+                            writer.write(&[byte])?;
                             digest.update(&[byte]);
                         }
                     }
@@ -161,10 +163,10 @@ fn decode(buf: &Vec<u8>, image_info: ImageInfo, outputfile: &str){
                             //break;
                         }else{
                             if n > 0{
-                                writer.write(&end[0..n as usize]).unwrap();
+                                writer.write(&end[0..n as usize])?;
                                 digest.update(&end[0..n as usize]);
                             }
-                            writer.write(&[byte]).unwrap();
+                            writer.write(&[byte])?;
                             digest.update(&[byte]);
                         }
                     }
@@ -192,7 +194,7 @@ fn decode(buf: &Vec<u8>, image_info: ImageInfo, outputfile: &str){
         }
         SearchState::FoundEnd(n) =>{
             if n != 4{
-                println!("Error did not find end marker file is probably corrupt");
+                println!("Error did not find end marker. File is probably corrupt");
             }
         }
         SearchState::CRC(n) =>{
@@ -203,7 +205,7 @@ fn decode(buf: &Vec<u8>, image_info: ImageInfo, outputfile: &str){
                     println!(" CRC OK!");
                 }
                 else{
-                    println!(" CRC Error!");
+                    println!(" CRC Error! File is probably corrupt");
                 }
                 println!("File CRC 0x{:08x} stored CRC 0x{:08x}", filecrc, readcrc);
             }
@@ -212,12 +214,14 @@ fn decode(buf: &Vec<u8>, image_info: ImageInfo, outputfile: &str){
             }
         }
     }
+
+    Ok(())
 }
 
-fn encode(reader : &Reader<File>, buf: &mut Vec<u8>, image_info: ImageInfo, outputfile: &str, inputfile: &str) {
+fn encode(reader : &Reader<File>, buf: &mut Vec<u8>, image_info: ImageInfo, outputfile: &str, inputfile: &str) -> Result<(), Box<dyn Error>>{
 
     let path = Path::new(outputfile);
-    let file = File::create(path).unwrap();
+    let file = File::create(path)?;
     let ref mut writer = BufWriter::new(file);
 
     let mut encbytes: VecDeque<u8> = VecDeque::new();
@@ -226,13 +230,13 @@ fn encode(reader : &Reader<File>, buf: &mut Vec<u8>, image_info: ImageInfo, outp
 
     {
         let path = Path::new(inputfile);
-        let file = File::open(path).unwrap();
-        let meta = file.metadata().unwrap();
+        let file = File::open(path)?;
+        let meta = file.metadata()?;
         let inputlen = meta.len();
         let mut inputreader = BufReader::new(file);
 
         if (inputlen + 12)> image_info.maxencode{
-            panic!("File too large to encode in image file {} max bytes {}", inputlen + 8, image_info.maxencode);
+            panic!("File too large to encode in image file {} max bytes {}", inputlen + 12, image_info.maxencode);
         }
 
         let crc = Crc::<u32>::new(&CRC_32_CKSUM);
@@ -240,7 +244,7 @@ fn encode(reader : &Reader<File>, buf: &mut Vec<u8>, image_info: ImageInfo, outp
 
         let mut buf = [0u8; 1024];
         loop{
-            let n = inputreader.read(&mut buf).unwrap();
+            let n = inputreader.read(&mut buf)?;
 
             if n == 0{
                 break;
@@ -256,7 +260,7 @@ fn encode(reader : &Reader<File>, buf: &mut Vec<u8>, image_info: ImageInfo, outp
         println!("File CRC32 0x{:08x}", filecrc);
     }
 
-    let mut enc = Encoder::with_info(writer, reader.info().clone()).unwrap();
+    let mut enc = Encoder::with_info(writer, reader.info().clone())?;
 
     enc.set_compression(png::Compression::Default);
 
@@ -311,12 +315,14 @@ fn encode(reader : &Reader<File>, buf: &mut Vec<u8>, image_info: ImageInfo, outp
             }
     };
 
-    let mut writer = enc.write_header().unwrap();
+    let mut writer = enc.write_header()?;
 
     println!("Encoded {} bytes with {} metadata bytes. Wrinting output file...", bytecounter, 8+4);
-    writer.write_image_data(&buf).unwrap();
+    writer.write_image_data(&buf)?;
 
-    writer.finish().unwrap();
+    writer.finish()?;
+
+    Ok(())
 }
 
 fn check_info(reader : &Reader<File>) -> ImageInfo {
