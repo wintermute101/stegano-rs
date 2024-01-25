@@ -159,8 +159,6 @@ fn decode(buf: &Vec<u8>, image_info: ImageInfo, outputfile: &str) -> Result<(), 
                         if byte == end[n as usize]{
                             //println!("Found end marker! {}", n);
                             state = SearchState::CRC(0);
-                            bytecounter += 1;
-                            //break;
                         }else{
                             if n > 0{
                                 writer.write(&end[0..n as usize])?;
@@ -175,7 +173,7 @@ fn decode(buf: &Vec<u8>, image_info: ImageInfo, outputfile: &str) -> Result<(), 
                         readcrc = readcrc << 8 | byte as u32;
                         if n == 3{
                             state = SearchState::CRC(4);
-                            bytecounter -= 4; //correct for CRC
+                            bytecounter -= 3; //correct for CRC and break early
                             break;
                         }
                     }
